@@ -38,6 +38,13 @@ export default [
     props: true,
   },
   {
+    path: '/draft/zoey',
+    name: 'DraftMock',
+    component: () => import('@/arkham/views/DraftMock.vue'),
+    meta: { requiresAuth: true, title: "Arkham Horror: Draft Mode Mock" },
+    props: true,
+  },
+  {
     path: '/games/:gameId',
     name: 'Game',
     component: Game,

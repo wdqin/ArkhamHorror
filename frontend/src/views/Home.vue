@@ -66,6 +66,10 @@ const toggleNewGame = () => {
   })
 }
 
+const openDraftMock = () => {
+  router.push({ path: '/draft/zoey' })
+}
+
 const dismissNotification = (notification: AppNotification) => {
   localStorage.setItem('dismissedNotifications', JSON.stringify([notification.id, ...dismissedNotifications]))
   notifications.value = notifications.value.filter(n => n.id !== notification.id)
@@ -92,7 +96,12 @@ const dismissNotification = (notification: AppNotification) => {
         <section>
           <header class="main-header">
             <h2>{{$t('activeGames')}}</h2>
-            <PrimaryButton label="New Game" @click="toggleNewGame" />
+            <div class="header-actions">
+              <button v-if="currentUser" class="draft-button" type="button" @click="openDraftMock">
+                Draft Mode Mock
+              </button>
+              <PrimaryButton label="New Game" @click="toggleNewGame" />
+            </div>
           </header>
           <div v-if="activeGames.length === 0" class="box">
             <p>No active games.</p>

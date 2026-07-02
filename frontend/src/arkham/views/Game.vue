@@ -34,9 +34,11 @@ import { handleEmbeddedI18n } from '@/arkham/i18n'
 import * as Arkham from '@/arkham/types/Game'
 import * as ArkhamGame from '@/arkham/types/Game'
 import { Card, cardDecoder, toCardContents } from '@/arkham/types/Card'
+import type { ArkhamDbDecklist } from '@/arkham/types/Deck'
 import * as Message from '@/arkham/types/Message'
 import { type Question } from '@/arkham/types/Question'
 import { TarotCard, tarotCardDecoder, tarotCardImage } from '@/arkham/types/TarotCard'
+import { clearDraftMockDecklist, loadDraftMockDecklist } from '@/arkham/draft/storage'
 import Campaign from '@/arkham/components/Campaign.vue'
 import CampaignLog from '@/arkham/components/CampaignLog.vue'
 import CampaignSettings from '@/arkham/components/CampaignSettings.vue'
@@ -141,6 +143,14 @@ const choices = computed(() => {
 })
 const gameOver = computed(() => game.value?.gameState.tag === "IsOver")
 const question = computed(() => playerId.value ? game.value?.question[playerId.value] : null)
+const submittedDraftMockDecklist = ref(false)
+
+function questionTag(q: Question | null | undefined): string | null {
+  if (!q) return null
+  if (q.tag === 'QuestionLabel') return q.question.tag
+  return q.tag
+}
+
 const websocketUrl = computed(() => {
   const spectatePrefix = props.spectate ? "/spectate" : ""
   return `${baseURL}/api/v1/arkham/games/${props.gameId}${spectatePrefix}?token=${userStore.token}`.
@@ -632,7 +642,7 @@ async function chooseDeck(deckId: string): Promise<void> {
   }
 }
 
-async function chooseDeckList(deckList: object): Promise<void> {
+async function chooseDeckList(deckList: ArkhamDbDecklist): Promise<void> {
   if(game.value && !props.spectate) {
     oldQuestion.value = game.value.question
     game.value.question = {}
@@ -640,6 +650,29 @@ async function chooseDeckList(deckList: object): Promise<void> {
     send(JSON.stringify({tag: 'DeckListAnswer', deckList, playerId: playerId.value}))
   }
 }
+
+async function maybeSubmitDraftMockDecklist(): Promise<void> {
+  if (submittedDraftMockDecklist.value || props.spectate || !game.value || !playerId.value) return
+  if (questionTag(game.value.question[playerId.value]) !== 'ChooseDeck') return
+
+  const decklist = loadDraftMockDecklist(props.gameId)
+  if (!decklist) return
+
+  submittedDraftMockDecklist.value = true
+  await chooseDeckList(decklist)
+  clearDraftMockDecklist(props.gameId)
+}
+
+watch([game, playerId], () => {
+  void maybeSubmitDraftMockDecklist().catch((e: unknown) => {
+    submittedDraftMockDecklist.value = false
+    console.error(e)
+  })
+})
+
+watch(() => props.gameId, () => {
+  submittedDraftMockDecklist.value = false
+})
 
 async function choosePaymentAmounts(amounts: Record<string, number>): Promise<void> {
   if(game.value && !props.spectate) {
