@@ -1,7 +1,6 @@
 import type { ArkhamDbDecklist } from '@/arkham/types/Deck'
 import type { DraftPick } from '@/arkham/draft/types'
 import {
-  DRAFT_MOCK_DECK_NAME,
   RANDOM_BASIC_WEAKNESS_CODE,
   ZOEY_INVESTIGATOR_CODE,
   ZOEY_INVESTIGATOR_NAME,
@@ -21,7 +20,10 @@ export function countDraftCards(picks: readonly DraftPick[]): Record<string, num
   return slots
 }
 
-export function buildZoeyDraftDecklist(picks: readonly DraftPick[]): ArkhamDbDecklist {
+export function buildZoeyDraftDecklist(
+  picks: readonly DraftPick[],
+  scenarioName: string,
+): ArkhamDbDecklist {
   const slots = countDraftCards(picks)
   slots[ZOEY_SIGNATURE_CODE] = (slots[ZOEY_SIGNATURE_CODE] ?? 0) + 1
   slots[ZOEY_SIGNATURE_WEAKNESS_CODE] = (slots[ZOEY_SIGNATURE_WEAKNESS_CODE] ?? 0) + 1
@@ -30,7 +32,7 @@ export function buildZoeyDraftDecklist(picks: readonly DraftPick[]): ArkhamDbDec
   return {
     id: `draft-mock-zoey-${Date.now()}`,
     url: null,
-    name: DRAFT_MOCK_DECK_NAME,
+    name: `Draft Zoey - ${scenarioName}`,
     investigator_code: ZOEY_INVESTIGATOR_CODE,
     investigator_name: ZOEY_INVESTIGATOR_NAME,
     slots,

@@ -3,10 +3,12 @@ import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { newGame as createGame } from '@/arkham/api'
 import { useCardStore } from '@/stores/cards'
+import { cardImage } from '@/arkham/cardImages'
 import { imgsrc } from '@/arkham/helpers'
 import type { CardDef } from '@/arkham/types/CardDef'
 import { buildZoeyDraftDecklist, countDraftCards } from '@/arkham/draft/buildDraftDecklist'
-import { saveDraftMockDecklist } from '@/arkham/draft/storage'
+import { drawScenarioOptions, type DraftScenarioOption } from '@/arkham/draft/scenarioPool'
+import { saveDraftMockDecklist, saveDraftMockSetupState } from '@/arkham/draft/storage'
 import {
   DRAFT_CARDS_PER_PACKET,
   DRAFT_CARD_COPY_LIMIT,
@@ -14,15 +16,12 @@ import {
   type DraftPacket,
   type DraftPick,
 } from '@/arkham/draft/types'
-import {
-  DRAFT_MOCK_CAMPAIGN_NAME,
-  MIDNIGHT_MASKS_SCENARIO_ID,
-  roundPacketPreferences,
-  zoeyMockPackets,
-} from '@/arkham/draft/zoeyMockPackets'
+import { roundPacketPreferences, zoeyMockPackets } from '@/arkham/draft/zoeyMockPackets'
 
 const router = useRouter()
 const cardStore = useCardStore()
+const scenarioOptions = ref<DraftScenarioOption[]>(drawScenarioOptions())
+const selectedScenario = ref<DraftScenarioOption | null>(null)
 const picks = ref<DraftPick[]>([])
 const error = ref<string | null>(null)
 const starting = ref(false)
@@ -41,6 +40,11 @@ const cardMap = computed(() => {
 const currentRoundIndex = computed(() => picks.value.length)
 const currentRound = computed(() => Math.min(currentRoundIndex.value + 1, DRAFT_ROUNDS))
 const isComplete = computed(() => picks.value.length >= DRAFT_ROUNDS)
+const hasSelectedScenario = computed(() => selectedScenario.value !== null)
+const selectedScenarioName = computed(() => selectedScenario.value?.name ?? 'Choose a scenario')
+const selectedCampaignName = computed(
+  () => selectedScenario.value?.campaignName ?? 'Scenario draft',
+)
 const draftCounts = computed(() => countDraftCards(picks.value))
 const draftedCardTotal = computed(() =>
   Object.values(draftCounts.value).reduce((total, count) => total + count, 0),
@@ -87,6 +91,7 @@ const currentPackets = computed(() => {
 const canStart = computed(
   () =>
     !starting.value &&
+    selectedScenario.value !== null &&
     picks.value.length === DRAFT_ROUNDS &&
     draftedCardTotal.value === DRAFT_ROUNDS * DRAFT_CARDS_PER_PACKET,
 )
@@ -102,10 +107,6 @@ function cardName(code: string): string {
   return `${card.name.title}${subtitle}`
 }
 
-function cardImage(code: string): string {
-  return imgsrc(`cards/${code.replace(/^c/, '')}.avif`)
-}
-
 function isPacketLegal(packet: DraftPacket): boolean {
   const nextCounts = { ...draftCounts.value }
 
@@ -118,6 +119,7 @@ function isPacketLegal(packet: DraftPacket): boolean {
 }
 
 function selectPacket(packet: DraftPacket) {
+  if (!selectedScenario.value) return
   if (isComplete.value) return
   if (!isPacketLegal(packet)) {
     error.value = 'That packet would exceed the two-copy deck limit.'
@@ -135,6 +137,11 @@ function selectPacket(packet: DraftPacket) {
   ]
 }
 
+function selectScenario(scenario: DraftScenarioOption) {
+  selectedScenario.value = scenario
+  error.value = null
+}
+
 function undoLastPick() {
   error.value = null
   picks.value = picks.value.slice(0, -1)
@@ -142,6 +149,8 @@ function undoLastPick() {
 
 function restartDraft() {
   error.value = null
+  selectedScenario.value = null
+  scenarioOptions.value = drawScenarioOptions()
   picks.value = []
 }
 
@@ -151,26 +160,31 @@ function errorMessage(err: unknown): string {
 }
 
 async function startStandalone() {
-  if (!canStart.value) return
+  const scenario = selectedScenario.value
+  if (!canStart.value || !scenario) return
 
   starting.value = true
   error.value = null
 
   try {
-    const decklist = buildZoeyDraftDecklist(picks.value)
+    const decklist = buildZoeyDraftDecklist(picks.value, scenario.name)
     const game = await createGame(
       [null],
       1,
       null,
-      MIDNIGHT_MASKS_SCENARIO_ID,
+      scenario.id,
       'Easy',
-      DRAFT_MOCK_CAMPAIGN_NAME,
+      `Draft Mock - ${scenario.name}`,
       'WithFriends',
       false,
       [],
     )
 
     saveDraftMockDecklist(game.id, decklist)
+    saveDraftMockSetupState(game.id, {
+      autoResolveStandaloneSettings: true,
+      standaloneSetupSummary: [],
+    })
     await router.push(`/games/${game.id}`)
   } catch (err) {
     error.value = errorMessage(err)
@@ -186,7 +200,7 @@ async function startStandalone() {
       <header class="draft-header">
         <div>
           <h1>Draft Mode Mock</h1>
-          <p>Zoey Samaras / The Midnight Masks / 10 packet draft</p>
+          <p>Zoey Samaras / {{ selectedScenarioName }} / 10 packet draft</p>
         </div>
         <button class="ghost-button" type="button" @click="router.push('/')">Back</button>
       </header>
@@ -195,13 +209,18 @@ async function startStandalone() {
         <section class="draft-main" aria-live="polite">
           <div class="round-panel">
             <div class="round-copy">
-              <span class="round-label">Round {{ currentRound }} / {{ DRAFT_ROUNDS }}</span>
-              <h2 v-if="!isComplete">Choose one packet</h2>
+              <span class="round-label" v-if="!hasSelectedScenario">Scenario draft</span>
+              <span class="round-label" v-else>Round {{ currentRound }} / {{ DRAFT_ROUNDS }}</span>
+              <h2 v-if="!hasSelectedScenario">Choose one scenario</h2>
+              <h2 v-else-if="!isComplete">Choose one packet</h2>
               <h2 v-else>Draft complete</h2>
-              <p v-if="!isComplete">
+              <p v-if="!hasSelectedScenario">
+                Pick the standalone scenario for this Zoey draft run.
+              </p>
+              <p v-else-if="!isComplete">
                 Pick one packet. All three cards are added to the draft deck.
               </p>
-              <p v-else>Your 30-card Zoey draft is ready for a standalone game.</p>
+              <p v-else>Your 30-card Zoey draft is ready for {{ selectedScenarioName }}.</p>
             </div>
             <div class="draft-total">
               <strong>{{ draftedCardTotal }}</strong>
@@ -211,7 +230,22 @@ async function startStandalone() {
 
           <div v-if="error" class="error-state">{{ error }}</div>
 
-          <div v-if="!isComplete && currentPackets.length > 0" class="packet-grid">
+          <div v-if="!hasSelectedScenario" class="scenario-grid">
+            <button
+              v-for="scenario in scenarioOptions"
+              :key="scenario.id"
+              class="scenario-card"
+              type="button"
+              @click="selectScenario(scenario)"
+            >
+              <img :src="imgsrc(`boxes/${scenario.id}.jpg`)" :alt="scenario.name" />
+              <span class="packet-source">{{ scenario.campaignName }}</span>
+              <h3>{{ scenario.name }}</h3>
+              <small>{{ scenario.id }}</small>
+            </button>
+          </div>
+
+          <div v-else-if="!isComplete && currentPackets.length > 0" class="packet-grid">
             <button
               v-for="packet in currentPackets"
               :key="packet.id"
@@ -258,7 +292,11 @@ async function startStandalone() {
             <button type="button" @click="undoLastPick" :disabled="picks.length === 0 || starting">
               Undo last pick
             </button>
-            <button type="button" @click="restartDraft" :disabled="picks.length === 0 || starting">
+            <button
+              type="button"
+              @click="restartDraft"
+              :disabled="(!hasSelectedScenario && picks.length === 0) || starting"
+            >
               Restart draft
             </button>
             <button
@@ -270,6 +308,12 @@ async function startStandalone() {
               {{ starting ? 'Starting...' : 'Start Standalone' }}
             </button>
           </div>
+
+          <section class="summary-section first">
+            <h3>Scenario</h3>
+            <p class="selected-scenario">{{ selectedScenarioName }}</p>
+            <p class="muted">{{ selectedCampaignName }}</p>
+          </section>
 
           <section class="summary-section">
             <h3>Category Counts</h3>
@@ -401,13 +445,15 @@ h1 {
   line-height: 1;
 }
 
-.packet-grid {
+.packet-grid,
+.scenario-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 14px;
 }
 
-.packet-card {
+.packet-card,
+.scenario-card {
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -421,14 +467,28 @@ h1 {
   cursor: pointer;
 }
 
-.packet-card:hover {
+.packet-card:hover,
+.scenario-card:hover {
   border-color: var(--guardian);
   background: color-mix(in srgb, var(--guardian) 15%, var(--background));
 }
 
-.packet-card h3 {
+.packet-card h3,
+.scenario-card h3 {
   color: var(--title);
   font-size: 1.15rem;
+}
+
+.scenario-card img {
+  width: 100%;
+  aspect-ratio: 7 / 5;
+  object-fit: cover;
+  border-radius: 4px;
+}
+
+.scenario-card small {
+  color: var(--text);
+  opacity: 0.8;
 }
 
 .packet-type {
@@ -527,6 +587,12 @@ button:disabled {
   margin-top: 14px;
 }
 
+.summary-section.first {
+  border-top: 0;
+  padding-top: 0;
+  margin-top: 0;
+}
+
 .summary-section h3 {
   color: var(--title);
   margin-bottom: 10px;
@@ -565,6 +631,11 @@ button:disabled {
   color: var(--title);
 }
 
+.selected-scenario {
+  color: var(--title);
+  font-weight: 700;
+}
+
 .error-state,
 .empty-state,
 .complete-state {
@@ -587,7 +658,8 @@ button:disabled {
 
 @media (max-width: 900px) {
   .draft-layout,
-  .packet-grid {
+  .packet-grid,
+  .scenario-grid {
     grid-template-columns: 1fr;
   }
 

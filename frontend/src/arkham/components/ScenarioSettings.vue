@@ -1,16 +1,21 @@
 <script lang="ts" setup>
 import { watch, ref, computed } from 'vue'
 import scenarioJSON from '@/arkham/data/scenarios'
-import {updateStandaloneSettings} from '@/arkham/api'
+import { updateStandaloneSettings } from '@/arkham/api'
 import { Game } from '../types/Game'
 import { Scenario } from '../types/Scenario'
-import { StandaloneSetting, RecordedContent, SettingCondition } from '../types/StandaloneSetting'
+import { StandaloneSetting, SettingCondition } from '../types/StandaloneSetting'
 import ScenarioSetting from '@/arkham/components/ScenarioSetting.vue'
+import { randomizeStandaloneSetup } from '@/arkham/draft/randomStandaloneSetup'
 
 const props = defineProps<{
   game: Game
   scenario: Scenario
   playerId: string
+  autoResolve?: boolean
+}>()
+const emit = defineEmits<{
+  randomized: [summary: string[]]
 }>()
 const standaloneSettings = ref<StandaloneSetting[]>([])
 
@@ -20,9 +25,9 @@ const flattenedSettings = computed(() => {
       if (setting.type === 'Group') {
         return acc.concat(flattenSettings(setting.content))
       }
-      const {ifRecorded} = setting
+      const { ifRecorded } = setting
       if (ifRecorded) {
-        if(!ifRecorded.some((cond) => inactive(cond))) acc.push(setting)
+        if (!ifRecorded.some((cond) => inactive(cond))) acc.push(setting)
       } else {
         acc.push(setting)
       }
@@ -41,13 +46,19 @@ const findSetting = (key: string) => {
 // when we change standaloneSettings they are "cached" so to avoid this we deep copy the
 // standaloneSettings in order to never alter its original value.
 const computedStandaloneSettings = computed<StandaloneSetting[]>(() => {
-  const s = scenarioJSON.find((s) => s.id === props.scenario.id.replace(/^c/, ''))
-  return s?.settings ? s.settings as StandaloneSetting[] : []
+  const s = scenarioJSON.find((s) => s.id === props.scenario.id.replace(/^c/, '')) as
+    | { settings?: StandaloneSetting[] }
+    | undefined
+  return s?.settings ?? []
 })
 
-watch(computedStandaloneSettings, (newSettings) => {
-  standaloneSettings.value = newSettings
-}, { immediate: true })
+watch(
+  computedStandaloneSettings,
+  (newSettings) => {
+    standaloneSettings.value = newSettings
+  },
+  { immediate: true },
+)
 
 const submit = async () => {
   // When we submit we want to remove any settings which won't be active
@@ -57,7 +68,7 @@ const submit = async () => {
   let settings = JSON.parse(JSON.stringify(standaloneSettings.value))
 
   settings = settings.filter((setting: StandaloneSetting) => {
-    const {ifRecorded} = setting
+    const { ifRecorded } = setting
     if (ifRecorded) {
       return !ifRecorded.some((cond) => inactive(cond))
     }
@@ -68,24 +79,29 @@ const submit = async () => {
   updateStandaloneSettings(props.game.id, settings)
 }
 
+const submitRandomized = async () => {
+  const result = randomizeStandaloneSetup(standaloneSettings.value)
+  await updateStandaloneSettings(props.game.id, result.settings)
+  emit('randomized', result.summary)
+}
+
 const inactive = (cond: SettingCondition): boolean => {
   if (cond.type === 'inSet') {
-    const {key, content} = cond
+    const { key, content } = cond
     const setting = standaloneSettings.value.find((s) => s.key === key)
     if (!setting) return false
 
     const check = setting.key !== 'ToggleCrossedOut'
 
-    if (setting.type === "ToggleCrossedOut") {
+    if (setting.type === 'ToggleCrossedOut') {
       return setting.content.some((c) => c.content === check && c.key == content)
     }
 
-    if (setting.type === "ToggleRecords") {
+    if (setting.type === 'ToggleRecords') {
       return !setting.content.some((c) => {
         return c.content && c.key == content
       })
     }
-
 
     throw new Error(`Unhandled setting type ${setting.type}`)
   }
@@ -112,7 +128,7 @@ const inactive = (cond: SettingCondition): boolean => {
   }
 
   if (cond.type === 'survivedPlaneCrash') {
-    const k = findSetting("KilledInPlaneCrash")
+    const k = findSetting('KilledInPlaneCrash')
     if (!k) return false
     return k.content === cond.key
   }
@@ -122,7 +138,7 @@ const inactive = (cond: SettingCondition): boolean => {
 
 const activeSettings = computed(() => {
   return standaloneSettings.value.filter((setting) => {
-    const {ifRecorded} = setting
+    const { ifRecorded } = setting
     if (ifRecorded) {
       return !ifRecorded.some((cond) => inactive(cond))
     }
@@ -130,18 +146,37 @@ const activeSettings = computed(() => {
     return true
   })
 })
+
+// When a scenario has no standalone settings to configure, there's nothing for
+// the player to do here, so skip the screen entirely by auto-submitting.
+const submitted = ref(false)
+watch(
+  activeSettings,
+  (settings) => {
+    if (submitted.value) return
+
+    if (props.autoResolve) {
+      submitted.value = true
+      submitRandomized()
+      return
+    }
+
+    if (settings.length === 0) {
+      submitted.value = true
+      submit()
+    }
+  },
+  { immediate: true },
+)
 </script>
 
 <template>
-  <div class="container scroll-container">
-    <h2>Standalone Settings</h2>
-    <div v-if="activeSettings.length == 0">
-      <p>There are currently no standalone settings available for this scenario.</p>
-    </div>
+  <div v-if="activeSettings.length > 0 && !autoResolve" class="container scroll-container">
+    <h2>{{ $t('scenarioSettings.title') }}</h2>
     <div v-for="setting in activeSettings" :key="setting.key">
       <ScenarioSetting :setting="setting" :scenario="scenario" :game="game" :playerId="playerId" />
     </div>
-    <button @click="submit">Begin</button>
+    <button @click="submit">{{ $t('scenarioSettings.begin') }}</button>
   </div>
 </template>
 
@@ -153,11 +188,11 @@ const activeSettings = computed(() => {
   margin: 0 auto;
   margin-top: 10px;
   padding: 10px;
-  background-color: #3E485C;
+  background-color: #3e485c;
   border-radius: 5px;
   font-size: 1.5em;
-  color: #B6B6B6;
-  box-shadow: 1px 1px 6px rgba(15,17,23,0.45);
+  color: #b6b6b6;
+  box-shadow: 1px 1px 6px rgba(15, 17, 23, 0.45);
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -191,13 +226,13 @@ button {
   }
 }
 
-input[type=radio] {
+input[type='radio'] {
   display: none;
   /* margin: 10px; */
 }
 
-input[type=radio] + label {
-  display:inline-block;
+input[type='radio'] + label {
+  display: inline-block;
   padding: 4px 12px;
   background-color: hsl(80, 5%, 39%);
   border-color: #ddd;
@@ -206,17 +241,17 @@ input[type=radio] + label {
   }
 }
 
-input[type=radio]:checked + label {
-  background: #6E8640;
+input[type='radio']:checked + label {
+  background: var(--button-1);
 }
 
-input[type=checkbox] {
+input[type='checkbox'] {
   display: none;
   /* margin: 10px; */
 }
 
-input[type=checkbox] + label {
-  display:inline-block;
+input[type='checkbox'] + label {
+  display: inline-block;
   padding: 4px 12px;
   background-color: hsl(80, 5%, 39%);
   &:hover {
@@ -224,29 +259,29 @@ input[type=checkbox] + label {
   }
 
   &.invert {
-    background: #6E8640;
+    background: var(--button-1);
     &:hover {
-      background: #6E8640;
+      background: var(--button-1);
     }
   }
   border-color: #ddd;
 }
 
-input[type=checkbox]:checked + label {
-  background: #6E8640;
+input[type='checkbox']:checked + label {
+  background: var(--button-1);
   &.invert {
     background-color: hsl(80, 5%, 39%);
   }
 }
 
-.invert[type=checkbox] + label {
-    background: #6E8640;
-    &:hover {
-      background: #6E8640;
-    }
+.invert[type='checkbox'] + label {
+  background: var(--button-1);
+  &:hover {
+    background: var(--button-1);
+  }
 }
 
-.invert[type=checkbox]:checked + label {
+.invert[type='checkbox']:checked + label {
   background-color: hsl(80, 15%, 39%);
 }
 

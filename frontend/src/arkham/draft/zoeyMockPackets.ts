@@ -5,9 +5,6 @@ export const ZOEY_INVESTIGATOR_NAME = 'Zoey Samaras'
 export const ZOEY_SIGNATURE_CODE = '02006'
 export const ZOEY_SIGNATURE_WEAKNESS_CODE = '02007'
 export const RANDOM_BASIC_WEAKNESS_CODE = '01000'
-export const MIDNIGHT_MASKS_SCENARIO_ID = '01120'
-export const DRAFT_MOCK_CAMPAIGN_NAME = 'Draft Mock - The Midnight Masks'
-export const DRAFT_MOCK_DECK_NAME = 'Draft Zoey - The Midnight Masks'
 
 export const roundPacketPreferences: readonly DraftPacketType[][] = [
   ['Weapon Core', 'Combat Burst'],
